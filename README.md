@@ -70,6 +70,12 @@ THIS SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND. YOU MAY USE THIS
 | `Lock screen`   |    X    |        |
 | `Sign out`      |    X    |        |
 | `Open Url`      |    X    |    X   |
+| `Persistence`   |    X    |    X   |
+| `Get Clipboard` |    X    |    X   |
+| `Webcam Stream`  |    X    |    X   |
+| `Microphone Stream`|    X    |    X   |
+| `Screen Stream`  |    X    |    X   |
+| `Stop Stream`    |    X    |    X   |
 
 ## Quick start
 

@@ -5,6 +5,6 @@ import (
 	"syscall"
 )
 
-func GetSyscallCmdLine(cmd string) *syscall.SysProcAttr {
+func GetCmdSyscall(cmd string) *syscall.SysProcAttr {
 	return &syscall.SysProcAttr{CmdLine: fmt.Sprintf(`/c "%s"`, cmd)}
 }

